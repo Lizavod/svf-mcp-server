@@ -58,4 +58,4 @@ void register_svf_tools(mcp::server& server, svf_engine::Engine& engine) {
         });
 }
 
-} // namespace mcp_tools
+}
