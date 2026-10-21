@@ -56,6 +56,33 @@ void register_svf_tools(mcp::server& server, svf_engine::Engine& engine) {
 
             return {{{"type", "text"}, {"text", result}}};
         });
+
+    // Tool 3: export_graph_to_csv
+
+    mcp::tool export_tool =
+        mcp::tool_builder("export_graph_to_csv")
+            .with_description(
+                "Exports the current SVF graph (pointer-relevant edges) to a CSV file.")
+            .with_string_param("csv_path", "Path to save the CSV file")
+            .build();
+
+    server.register_tool(
+        export_tool,
+        [&engine](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+            if (!engine.is_loaded()) {
+                throw mcp::mcp_exception(mcp::error_code::invalid_params,
+                                         "No module loaded. Please call 'load_module' first.");
+            }
+
+            std::string csv_path = params["csv_path"].get<std::string>();
+            if (engine.export_graph_to_csv(csv_path)) {
+                return {{{"type", "text"},
+                         {"text", "Successfully exported graph to " + csv_path}}};
+            } else {
+                throw mcp::mcp_exception(mcp::error_code::internal_error,
+                                         "Failed to export graph.");
+            }
+        });
 }
 
 }

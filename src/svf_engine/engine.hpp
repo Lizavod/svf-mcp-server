@@ -11,6 +11,7 @@ class Engine {
 
     bool load_module(const std::string& bc_file_path);
     std::vector<std::string> get_function_names() const;
+    bool export_graph_to_csv(const std::string& csv_output_path);
 
     bool is_loaded() const {
         return is_loaded_;
