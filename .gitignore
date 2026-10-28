@@ -1,0 +1,13 @@
+build/
+
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+*.log
+server.log
