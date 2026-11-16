@@ -360,36 +360,6 @@ bool load_node_meta(const std::string& meta_path, std::map<SVF::NodeID, NodeMeta
     return true;
 }
 
-bool write_kotgll_graph(const std::string& graph_path, const std::string& output_path) {
-    std::ifstream graph_file(graph_path);
-    std::ofstream output_file(output_path);
-    if (!graph_file.is_open() || !output_file.is_open()) {
-        return false;
-    }
-
-    std::string line;
-    while (std::getline(graph_file, line)) {
-        if (line.empty()) {
-            continue;
-        }
-
-        const std::vector<std::string> fields = split_csv_line(line);
-        if (fields.size() < 3) {
-            continue;
-        }
-
-        SVF::NodeID src_id = 0;
-        SVF::NodeID dst_id = 0;
-        if (!parse_node_id(fields[0], src_id) || !parse_node_id(fields[1], dst_id)) {
-            continue;
-        }
-
-        output_file << src_id << ' ' << dst_id << ' ' << fields[2] << '\n';
-    }
-
-    return true;
-}
-
 std::string shell_quote(const std::string& value) {
     std::string quoted = "'";
     for (char c : value) {
@@ -401,23 +371,6 @@ std::string shell_quote(const std::string& value) {
     }
     quoted += "'";
     return quoted;
-}
-
-std::string kotgll_jar_path() {
-    if (const char* env = std::getenv("KOTGLL_JAR")) {
-        if (env[0] != '\0') {
-            return env;
-        }
-    }
-
-    if (const char* home = std::getenv("HOME")) {
-        const std::filesystem::path candidate = std::filesystem::path(home) / "kotgll-1.0.0.jar";
-        if (std::filesystem::exists(candidate)) {
-            return candidate.string();
-        }
-    }
-
-    return "kotgll-1.0.0.jar";
 }
 
 } // namespace
@@ -511,174 +464,7 @@ std::vector<std::string> Engine::get_function_names() const {
     return function_names_;
 }
 
-bool Engine::export_graph_to_csv(const std::string& csv_output_path) {
-    if (!is_loaded_) {
-        std::cerr << "[SVF ERROR] No module loaded; cannot export graph." << std::endl;
-        return false;
-    }
-
-    StdoutToStderr redirect;
-
-    try {
-        SVF::SVFIR* pag = SVF::SVFIR::getPAG();
-        if (!pag) {
-            std::cerr << "[SVF ERROR] SVFIR is not available." << std::endl;
-            return false;
-        }
-
-        std::ofstream csv(csv_output_path);
-        if (!csv.is_open()) {
-            std::cerr << "[SVF ERROR] Failed to open CSV file for writing: " << csv_output_path
-                      << std::endl;
-            return false;
-        }
-
-        csv << "src_id,dst_id,edge_kind,src_name,dst_name,source_loc\n";
-
-        const SVF::SVFStmt::PEDGEK kinds[] = {SVF::SVFStmt::Addr, SVF::SVFStmt::Copy,
-                                              SVF::SVFStmt::Load, SVF::SVFStmt::Store,
-                                              SVF::SVFStmt::Gep};
-
-        for (SVF::SVFStmt::PEDGEK kind : kinds) {
-            const SVF::SVFStmt::SVFStmtSetTy& edges = pag->getPTASVFStmtSet(kind);
-            for (const SVF::SVFStmt* edge : edges) {
-                if (!edge) {
-                    continue;
-                }
-
-                SVF::NodeID src_id = edge->getSrcID();
-                SVF::NodeID dst_id = edge->getDstID();
-
-                std::string source_loc;
-                if (SVF::ICFGNode* icfg_node = edge->getICFGNode()) {
-                    source_loc = compact_source_loc(icfg_node->getSourceLoc());
-                }
-
-                csv << src_id << ',' << dst_id << ','
-                    << edge_kind_name(static_cast<SVF::SVFStmt::PEDGEK>(edge->getEdgeKind())) << ','
-                    << csv_escape(node_name(pag, src_id)) << ','
-                    << csv_escape(node_name(pag, dst_id)) << ',' << csv_escape(source_loc) << '\n';
-            }
-        }
-
-        csv.close();
-        std::cerr << "[SVF INFO] Exported graph to " << csv_output_path << std::endl;
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "[SVF ERROR] Failed to export graph: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool Engine::export_cfl_graph(const std::string& graph_path, const std::string& grammar_path) {
-    if (!is_loaded_) {
-        std::cerr << "[SVF ERROR] No module loaded; cannot export CFL graph." << std::endl;
-        return false;
-    }
-
-    StdoutToStderr redirect;
-
-    try {
-        SVF::SVFIR* pag = SVF::SVFIR::getPAG();
-        if (!pag) {
-            std::cerr << "[SVF ERROR] SVFIR is not available." << std::endl;
-            return false;
-        }
-
-        std::ofstream graph_file(graph_path);
-        std::ofstream grammar_file(grammar_path);
-        if (!graph_file.is_open() || !grammar_file.is_open()) {
-            std::cerr << "[SVF ERROR] Failed to open CFL output files." << std::endl;
-            return false;
-        }
-
-        std::set<std::string> push_symbols;
-        std::set<std::string> pop_symbols;
-
-        graph_file << "src_id,dst_id,label\n";
-
-        const SVF::SVFStmt::PEDGEK kinds[] = {SVF::SVFStmt::Addr, SVF::SVFStmt::Copy,
-                                              SVF::SVFStmt::Load, SVF::SVFStmt::Store,
-                                              SVF::SVFStmt::Gep};
-
-        for (SVF::SVFStmt::PEDGEK kind : kinds) {
-            const SVF::SVFStmt::SVFStmtSetTy& edges = pag->getPTASVFStmtSet(kind);
-            for (const SVF::SVFStmt* edge : edges) {
-                if (!edge) {
-                    continue;
-                }
-
-                const SVF::NodeID src_id = edge->getSrcID();
-                const SVF::NodeID dst_id = edge->getDstID();
-
-                const SVF::SVFVar* src_node = pag->getSVFVar(src_id);
-                const SVF::SVFVar* dst_node = pag->getSVFVar(dst_id);
-                if (!src_node || !dst_node) {
-                    continue;
-                }
-
-                const std::string src_name = clean_name(src_node->getValueName());
-                const std::string dst_name = clean_name(dst_node->getValueName());
-
-                std::string label = "eps";
-
-                if (kind == SVF::SVFStmt::Addr) {
-                    if (!dst_name.empty()) {
-                        label = "pop_" + dst_name;
-                        pop_symbols.insert(label);
-                    }
-                } else if (kind == SVF::SVFStmt::Gep) {
-                    if (!dst_name.empty()) {
-                        label = "pop_" + dst_name;
-                        pop_symbols.insert(label);
-                    }
-                } else if (kind == SVF::SVFStmt::Load) {
-                    if (!src_name.empty()) {
-                        label = "push_" + src_name;
-                        push_symbols.insert(label);
-                    }
-                } else if (kind == SVF::SVFStmt::Store) {
-                    if (!dst_name.empty()) {
-                        label = "pop_" + dst_name;
-                        pop_symbols.insert(label);
-                    } else if (!src_name.empty() && pag->isObjVar(src_id)) {
-                        label = "pop_" + src_name;
-                        pop_symbols.insert(label);
-                    }
-                }
-
-                graph_file << src_id << ',' << dst_id << ',' << label << '\n';
-            }
-        }
-        graph_file.close();
-
-        grammar_file << "StartNonterminal(\"S\")\n";
-        grammar_file << "Nonterminal(\"S\") -> Terminal(\"eps\")\n";
-        grammar_file << "Nonterminal(\"S\") -> Nonterminal(\"S\") Nonterminal(\"S\")\n";
-
-        for (const std::string& push_sym : push_symbols) {
-            const std::string var_name = push_sym.substr(5);
-            const std::string pop_sym = "pop_" + var_name;
-
-            if (pop_symbols.count(pop_sym) != 0) {
-                grammar_file << "Nonterminal(\"S\") -> Terminal(\"" << push_sym
-                             << "\") Nonterminal(\"S\") Terminal(\"" << pop_sym << "\")\n";
-            }
-        }
-        grammar_file.close();
-
-        std::cerr << "[SVF INFO] Exported CFL graph to " << graph_path << " and grammar to "
-                  << grammar_path << std::endl;
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "[SVF ERROR] Failed to export CFL graph: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool Engine::export_svfg_artifacts(const std::string& output_dir) {
+bool Engine::prepare_artifacts(const std::string& output_dir) {
     if (!is_loaded_ || !svfg_) {
         std::cerr << "[SVF ERROR] No SVFG available; load a module first." << std::endl;
         return false;
@@ -703,10 +489,10 @@ bool Engine::export_svfg_artifacts(const std::string& output_dir) {
             return false;
         }
 
-        graph_file << "src_id,dst_id,label\n";
-
         std::set<SVF::NodeID> unique_objs;
         bool uses_unindexed_mem = false;
+
+        meta_file << "node_id,name,file,line\n";
 
         std::map<SVF::NodeID, NodeMeta> node_meta;
         auto collect_meta = [&](SVF::NodeID id) {
@@ -730,6 +516,8 @@ bool Engine::export_svfg_artifacts(const std::string& output_dir) {
             }
 
             node_meta[id] = meta;
+            meta_file << id << ',' << csv_escape(meta.name) << ',' << csv_escape(meta.file) << ','
+                      << csv_escape(meta.line) << '\n';
         };
 
         for (auto it = svfg_->begin(); it != svfg_->end(); ++it) {
@@ -772,34 +560,29 @@ bool Engine::export_svfg_artifacts(const std::string& output_dir) {
                 collect_meta(dst_id);
 
                 for (const std::string& label : labels) {
-                    graph_file << src_id << ',' << dst_id << ',' << csv_escape(label) << '\n';
+                    graph_file << src_id << ' ' << dst_id << ' ' << label << '\n';
                 }
             }
         }
         graph_file.close();
-
-        meta_file << "node_id,name,file,line\n";
-        for (const auto& entry : node_meta) {
-            meta_file << entry.first << ',' << csv_escape(entry.second.name) << ','
-                      << csv_escape(entry.second.file) << ',' << csv_escape(entry.second.line)
-                      << '\n';
-        }
         meta_file.close();
 
-        grammar_file << "StartNonterminal(\"S\")\n";
-        grammar_file << "Nonterminal(\"S\") -> Terminal(\"eps\")\n";
-        grammar_file << "Nonterminal(\"S\") ->\n";
-        grammar_file << "Nonterminal(\"S\") -> Terminal(\"assign\") Nonterminal(\"S\")\n";
+        // CNF-грамматика для матричного решателя (POCR формат)
+        grammar_file << "S\tassign\tS\n";
         for (const SVF::NodeID obj : unique_objs) {
-            grammar_file << "Nonterminal(\"S\") -> Terminal(\"mem_" << obj
-                         << "\") Nonterminal(\"S\")\n";
+            grammar_file << "S\tmem_" << obj << "\tS\n";
         }
         if (uses_unindexed_mem) {
-            grammar_file << "Nonterminal(\"S\") -> Terminal(\"mem\") Nonterminal(\"S\")\n";
+            grammar_file << "S\tmem\tS\n";
         }
-        grammar_file << "Nonterminal(\"S\") -> Terminal(\"call\") Nonterminal(\"S\") "
-                        "Terminal(\"ret\")\n";
-        grammar_file << "Nonterminal(\"S\") -> Terminal(\"ret\") Nonterminal(\"S\")\n";
+        // Разбиваем call S ret на два правила (CNF требует 1 или 2 символа справа)
+        grammar_file << "S\tcall\tCallRet\n";
+        grammar_file << "CallRet\tS\tret\n";
+        grammar_file << "S\tret\tS\n";
+        grammar_file << "S\tS\tS\n";
+        grammar_file << "S\n";           // epsilon-правило
+        grammar_file << "Count:\n";
+        grammar_file << "S\n";
         grammar_file.close();
 
         std::cerr << "[SVF INFO] Exported SVFG artifacts to " << output_dir << std::endl;
@@ -828,64 +611,102 @@ bool Engine::build_cfl_index(const std::string& index_path) {
         const std::filesystem::path work_dir(index_path + ".artifacts");
         std::filesystem::create_directories(work_dir);
 
-        if (!export_svfg_artifacts(work_dir.string())) {
+        if (!prepare_artifacts(work_dir.string())) {
+            return false;
+        }
+        if (!run_solver(work_dir.string())) {
+            return false;
+        }
+        if (!build_index_from_result(work_dir.string(), index_path)) {
             return false;
         }
 
-        const std::filesystem::path graph_csv = work_dir / "graph.csv";
-        const std::filesystem::path meta_csv = work_dir / "graph_meta.csv";
-        const std::filesystem::path grammar_cfg = work_dir / "grammar.cfg";
-        const std::filesystem::path solver_graph = work_dir / "graph.kotgll.csv";
-        const std::filesystem::path solver_result = work_dir / "kotgll_result.txt";
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "[SVF ERROR] Failed to build CFL index: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool Engine::run_solver(const std::string& work_dir) {
+    StdoutToStderr redirect;
+
+    try {
+        std::filesystem::path abs_work_dir = std::filesystem::absolute(work_dir);
+        std::string host_path = abs_work_dir.string();
+
+        std::string container_graph = "/data/graph.csv";
+        std::string container_grammar = "/data/grammar.cfg"; // или grammar_cnf.cfg
+        std::string container_result = "/data/solver_result.txt";
+
+        std::string command =
+            "docker run --rm -v " + shell_quote(host_path + ":/data") + " "
+            "cfpq/py_algo:latest "
+            "python3 -m cfpq_cli.run_all_pairs_cflr "
+            "NonIncrementalAllPairsCFLReachabilityMatrix "
+            + shell_quote(container_graph) + " "
+            + shell_quote(container_grammar) + " "
+            "--out " + shell_quote(container_result);
+
+        std::cerr << "[SVF INFO] Running Matrix solver: " << command << std::endl;
+        int status = std::system(command.c_str());
+
+        if (status != 0) {
+            std::cerr << "[SVF ERROR] Matrix solver failed with status " << status << std::endl;
+            return false;
+        }
+
+        std::filesystem::path result_path = abs_work_dir / "solver_result.txt";
+        if (!std::filesystem::exists(result_path)) {
+            std::cerr << "[SVF ERROR] Solver did not produce a result file." << std::endl;
+            return false;
+        }
+
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "[SVF ERROR] Failed to run Matrix solver: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool Engine::build_index_from_result(const std::string& work_dir,
+                                     const std::string& index_path) {
+    if (!is_loaded_ || !svfg_) {
+        std::cerr << "[SVF ERROR] No SVFG available; load a module first." << std::endl;
+        return false;
+    }
+
+    StdoutToStderr redirect;
+
+    try {
+        const std::filesystem::path dir(work_dir);
+        const std::filesystem::path graph_csv = dir / "graph.csv";
+        const std::filesystem::path meta_csv = dir / "graph_meta.csv";
+        const std::filesystem::path solver_result = dir / "solver_result.txt";
 
         // Store pairs (src, dst) that have a direct "assign" edge in the SVFG.
         std::set<std::pair<SVF::NodeID, SVF::NodeID>> direct_assign_edges;
         std::ifstream graph_in(graph_csv);
-        if (graph_in.is_open()) {
-            std::string g_line;
-            while (std::getline(graph_in, g_line)) {
-                if (g_line.empty()) {
-                    continue;
-                }
-                const std::vector<std::string> fields = split_csv_line(g_line);
-                if (fields.size() >= 3 && fields[2] == "assign") {
-                    SVF::NodeID s = 0;
-                    SVF::NodeID d = 0;
-                    if (parse_node_id(fields[0], s) && parse_node_id(fields[1], d)) {
-                        direct_assign_edges.insert({s, d});
-                    }
-                }
+        if (!graph_in.is_open()) {
+            std::cerr << "[SVF ERROR] Failed to open graph file: " << graph_csv << std::endl;
+            return false;
+        }
+
+        std::string g_line;
+        while (std::getline(graph_in, g_line)) {
+            if (g_line.empty()) {
+                continue;
             }
-        }
 
-        if (!write_kotgll_graph(graph_csv.string(), solver_graph.string())) {
-            std::cerr << "[SVF ERROR] Failed to prepare KotGLL graph input." << std::endl;
-            return false;
-        }
-
-        const std::string jar_path = kotgll_jar_path();
-        if (!std::filesystem::exists(jar_path)) {
-            std::cerr << "[SVF ERROR] KotGLL jar not found at " << jar_path
-                      << ". Set the KOTGLL_JAR environment variable." << std::endl;
-            return false;
-        }
-
-        const std::string command = "java -jar " + shell_quote(jar_path) +
-                                    " --input graph --grammar cfg --inputPath " +
-                                    shell_quote(solver_graph.string()) + " --grammarPath " +
-                                    shell_quote(grammar_cfg.string()) + " --outputPath " +
-                                    shell_quote(solver_result.string());
-
-        std::cerr << "[SVF INFO] Running KotGLL: " << command << std::endl;
-        const int status = std::system(command.c_str());
-        if (status != 0) {
-            std::cerr << "[SVF ERROR] KotGLL failed with status " << status << std::endl;
-            return false;
-        }
-
-        if (!std::filesystem::exists(solver_result)) {
-            std::cerr << "[SVF ERROR] KotGLL did not produce a result file." << std::endl;
-            return false;
+            std::istringstream row(g_line);
+            SVF::NodeID s = 0;
+            SVF::NodeID d = 0;
+            std::string label;
+            if (row >> s >> d >> label && label == "assign") {
+                direct_assign_edges.insert({s, d});
+            }
         }
 
         std::map<SVF::NodeID, NodeMeta> node_meta;
@@ -896,7 +717,7 @@ bool Engine::build_cfl_index(const std::string& index_path) {
 
         std::ifstream result_file(solver_result);
         if (!result_file.is_open()) {
-            std::cerr << "[SVF ERROR] Failed to open KotGLL result file." << std::endl;
+            std::cerr << "[SVF ERROR] Failed to open solver result file." << std::endl;
             return false;
         }
 
@@ -1057,7 +878,7 @@ bool Engine::build_cfl_index(const std::string& index_path) {
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "[SVF ERROR] Failed to build CFL index: " << e.what() << std::endl;
+        std::cerr << "[SVF ERROR] Failed to build index from result: " << e.what() << std::endl;
         return false;
     }
 }

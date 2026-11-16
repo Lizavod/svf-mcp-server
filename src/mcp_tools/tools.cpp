@@ -58,64 +58,7 @@ void register_svf_tools(mcp::server& server, svf_engine::Engine& engine) {
             return {{{"type", "text"}, {"text", result}}};
         });
 
-    // Tool 3: export_graph_to_csv
-
-    mcp::tool export_tool =
-        mcp::tool_builder("export_graph_to_csv")
-            .with_description(
-                "Exports the current SVF graph (pointer-relevant edges) to a CSV file.")
-            .with_string_param("csv_path", "Path to save the CSV file")
-            .build();
-
-    server.register_tool(
-        export_tool,
-        [&engine](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
-            if (!engine.is_loaded()) {
-                throw mcp::mcp_exception(mcp::error_code::invalid_params,
-                                         "No module loaded. Please call 'load_module' first.");
-            }
-
-            std::string csv_path = params["csv_path"].get<std::string>();
-            if (engine.export_graph_to_csv(csv_path)) {
-                return {{{"type", "text"}, {"text", "Successfully exported graph to " + csv_path}}};
-            } else {
-                throw mcp::mcp_exception(mcp::error_code::internal_error,
-                                         "Failed to export graph.");
-            }
-        });
-
-    // Tool 4: export_cfl_graph
-
-    mcp::tool export_cfl_tool =
-        mcp::tool_builder("export_cfl_graph")
-            .with_description("Exports the SVF graph as a CFL-reachability graph (graph.csv) and "
-                              "generates the corresponding grammar (grammar.cfg).")
-            .with_string_param("graph_path", "Path to save the CFL graph CSV file")
-            .with_string_param("grammar_path", "Path to save the generated grammar file")
-            .build();
-
-    server.register_tool(
-        export_cfl_tool,
-        [&engine](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
-            if (!engine.is_loaded()) {
-                throw mcp::mcp_exception(mcp::error_code::invalid_params,
-                                         "No module loaded. Please call 'load_module' first.");
-            }
-
-            std::string graph_path = params["graph_path"].get<std::string>();
-            std::string grammar_path = params["grammar_path"].get<std::string>();
-
-            if (engine.export_cfl_graph(graph_path, grammar_path)) {
-                return {{{"type", "text"},
-                         {"text", "Successfully exported CFL graph to " + graph_path +
-                                      " and grammar to " + grammar_path}}};
-            } else {
-                throw mcp::mcp_exception(mcp::error_code::internal_error,
-                                         "Failed to export CFL graph.");
-            }
-        });
-
-    // Tool 5: build_cfl_index
+    // Tool 3: build_cfl_index
 
     mcp::tool build_index_tool =
         mcp::tool_builder("build_cfl_index")
