@@ -1,4 +1,5 @@
 #pragma once
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,31 +11,39 @@ class SVFGBuilder;
 
 namespace svf_engine {
 
-class Engine {
+class SVFWrapper {
   public:
-    Engine();
-    ~Engine();
+    SVFWrapper();
+    ~SVFWrapper();
+
+    SVFWrapper(const SVFWrapper&) = delete;
+    SVFWrapper& operator=(const SVFWrapper&) = delete;
 
     bool load_module(const std::string& bc_file_path);
-    std::vector<std::string> get_function_names() const;
-    bool build_cfl_index(const std::string& index_path);
-    std::vector<std::string> lookup_name(const std::string& name) const;
+    const std::vector<std::string>& get_function_names() const {
+        return function_names_;
+    }
 
     bool is_loaded() const {
         return is_loaded_;
     }
 
+    const std::string& current_path() const {
+        return current_path_;
+    }
+
+    SVF::SVFG* svfg() const {
+        return svfg_;
+    }
+
   private:
-    bool prepare_artifacts(const std::string& work_dir);
-    bool run_solver(const std::string& work_dir);
-    bool build_index_from_result(const std::string& work_dir, const std::string& index_path);
+    void release_resources();
 
     bool is_loaded_ = false;
     std::string current_path_;
     std::vector<std::string> function_names_;
     std::unique_ptr<SVF::SVFGBuilder> svfg_builder_;
     SVF::SVFG* svfg_ = nullptr;
-    std::vector<std::string> name_index_;
 };
 
 } // namespace svf_engine

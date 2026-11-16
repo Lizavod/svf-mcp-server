@@ -1,12 +1,12 @@
 #include "mcp_server.h"
 #include "mcp_tools/tools.hpp"
-#include "svf_engine/engine.hpp"
+#include "name_resolver/resolver.hpp"
 #include <iostream>
 
 int main() {
     std::cerr << "[INFO] Initializing SVF MCP Server..." << std::endl;
 
-    svf_engine::Engine engine;
+    svf_engine::NameResolver resolver;
 
     mcp::server::configuration srv_conf;
     mcp::server server(srv_conf);
@@ -16,7 +16,7 @@ int main() {
     mcp::json capabilities = {{"tools", mcp::json::object()}};
     server.set_capabilities(capabilities);
 
-    mcp_tools::register_svf_tools(server, engine);
+    mcp_tools::register_svf_tools(server, resolver);
 
     std::cerr << "[INFO] Server started in STDIO mode. Awaiting JSON-RPC requests..." << std::endl;
     server.start_stdio();
