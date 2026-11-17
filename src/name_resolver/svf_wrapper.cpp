@@ -1,32 +1,27 @@
-#include "svf_engine/engine.hpp"
+#include "name_resolver/svf_wrapper.hpp"
+
+#include "name_resolver/utils.hpp"
+
+#include "Graphs/SVFG.h"
+#include "MSSA/SVFGBuilder.h"
 #include "SVF-LLVM/LLVMUtil.h"
 #include "SVF-LLVM/SVFIRBuilder.h"
-#include "Util/Options.h"
+#include "SVFIR/SVFIR.h"
+#include "SVFIR/SVFValue.h"
+#include "Util/SVFUtil.h"
 #include "WPA/Andersen.h"
+
 #include <iostream>
+#include <stdexcept>
 
 namespace svf_engine {
 
-class StdoutToStderr {
-  public:
-    StdoutToStderr() {
-        saved_stdout = dup(STDOUT_FILENO);
-        dup2(STDERR_FILENO, STDOUT_FILENO);
-    }
+SVFWrapper::SVFWrapper() = default;
 
-    ~StdoutToStderr() {
-        fflush(stdout);
-        dup2(saved_stdout, STDOUT_FILENO);
-        close(saved_stdout);
-    }
+SVFWrapper::~SVFWrapper() {
+    svfg_builder_.reset();
+    svfg_ = nullptr;
 
-  private:
-    int saved_stdout;
-};
-
-Engine::Engine() = default;
-
-Engine::~Engine() {
     if (is_loaded_) {
         std::cerr << "[SVF INFO] Releasing SVF resources..." << std::endl;
         SVF::AndersenWaveDiff::releaseAndersenWaveDiff();
@@ -35,16 +30,24 @@ Engine::~Engine() {
     }
 }
 
-bool Engine::load_module(const std::string& bc_file_path) {
+void SVFWrapper::release_resources() {
+    svfg_builder_.reset();
+    svfg_ = nullptr;
+    function_names_.clear();
 
-    StdoutToStderr redirect;
+    if (is_loaded_) {
+        SVF::AndersenWaveDiff::releaseAndersenWaveDiff();
+        SVF::SVFIR::releaseSVFIR();
+        SVF::LLVMModuleSet::releaseLLVMModuleSet();
+        is_loaded_ = false;
+    }
+}
+
+bool SVFWrapper::load_module(const std::string& bc_file_path) {
+    utils::StdoutToStderr redirect;
 
     try {
-        if (is_loaded_) {
-            SVF::AndersenWaveDiff::releaseAndersenWaveDiff();
-            SVF::SVFIR::releaseSVFIR();
-            SVF::LLVMModuleSet::releaseLLVMModuleSet();
-        }
+        release_resources();
 
         std::cerr << "[SVF INFO] Loading module: " << bc_file_path << std::endl;
 
@@ -57,6 +60,12 @@ bool Engine::load_module(const std::string& bc_file_path) {
 
         SVF::Andersen* ander = SVF::AndersenWaveDiff::createAndersenWaveDiff(pag);
         SVF::CallGraph* cg = ander->getCallGraph();
+
+        svfg_builder_ = std::make_unique<SVF::SVFGBuilder>();
+        svfg_ = svfg_builder_->buildFullSVFG(ander);
+        if (!svfg_) {
+            throw std::runtime_error("Failed to build the full SVFG");
+        }
 
         function_names_.clear();
         for (auto it = cg->begin(); it != cg->end(); ++it) {
@@ -79,8 +88,4 @@ bool Engine::load_module(const std::string& bc_file_path) {
     }
 }
 
-std::vector<std::string> Engine::get_function_names() const {
-    return function_names_;
-}
-
-}
+} // namespace svf_engine
